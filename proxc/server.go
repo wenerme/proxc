@@ -60,6 +60,7 @@ func (svr *Server) Init() (err error) {
 	}
 	p.Client.Transport = tr
 
+	svr.Proxy = p
 	return
 }
 
