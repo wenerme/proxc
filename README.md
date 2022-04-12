@@ -1,6 +1,6 @@
 # proxc
 
-Proxy Server with Cache
+Proxy Server with Cache in Golang
 
 ```bash
 go install github.com/wenerme/proxc/cmd/proxc@latest
