@@ -10,26 +10,26 @@ import (
 
 // NewSQLiteCache create a cache for per host sqlite db plus a file db
 func NewSQLiteCache(dir string) *dbcache.Cache {
-	set := &Set{
-		Dir: dir,
-	}
-	return &dbcache.Cache{
-		GetDB: func(r *http.Request) (db *gorm.DB, file *gorm.DB, err error) {
-			db, err = set.Get(r.URL.Host, func(o *GetDBOptions) {
-				o.OnInit = func(db *gorm.DB) error {
-					return db.AutoMigrate(models.HTTPResponse{})
-				}
-			})
-			if err != nil {
-				return
+	set := &Set{Dir: dir}
+	return &dbcache.Cache{GetDB: GetDBByHost(set)}
+}
+
+func GetDBByHost(set *Set) func(r *http.Request) (db *gorm.DB, file *gorm.DB, err error) {
+	return func(r *http.Request) (db *gorm.DB, file *gorm.DB, err error) {
+		db, err = set.Get(r.URL.Hostname(), func(o *GetDBOptions) {
+			o.OnInit = func(db *gorm.DB) error {
+				return db.AutoMigrate(models.HTTPResponse{})
 			}
-			file, err = set.Get("file", func(o *GetDBOptions) {
-				o.OnInit = func(db *gorm.DB) error {
-					return db.AutoMigrate(models.FileContent{}, models.FileRef{})
-				}
-			})
+		})
+		if err != nil {
 			return
-		},
+		}
+		file, err = set.Get("file", func(o *GetDBOptions) {
+			o.OnInit = func(db *gorm.DB) error {
+				return db.AutoMigrate(models.FileContent{}, models.FileRef{})
+			}
+		})
+		return
 	}
 }
 

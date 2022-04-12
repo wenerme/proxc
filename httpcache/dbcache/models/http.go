@@ -151,12 +151,6 @@ func (m *HTTPResponse) SetResponse(resp *http.Response) (err error) {
 		m.Encoding = "zstd"
 	}
 
-	var r io.ReadCloser
-	r, resp.Body, err = drainBody(resp.Body)
-	if err != nil {
-		return err
-	}
-
 	if hdr := resp.Header.Get("Content-Disposition"); hdr != "" {
 		_, params, _ := mime.ParseMediaType(hdr)
 		filename := params["filename"]
@@ -164,9 +158,16 @@ func (m *HTTPResponse) SetResponse(resp *http.Response) (err error) {
 			m.FileName = filename
 		}
 	}
+
+	var body []byte
+	body, resp.Body, err = drainBody(resp.Body)
+	if err != nil {
+		return errors.Wrap(err, "drain body")
+	}
+
 	switch {
 	case m.Encoding == "" || m.Encoding == "identity":
-		m.Body, err = io.ReadAll(r)
+		m.Body = body
 		m.BodySize = int64(len(m.Body))
 		m.RawSize = m.BodySize
 	default:
@@ -175,12 +176,13 @@ func (m *HTTPResponse) SetResponse(resp *http.Response) (err error) {
 
 		w, err = EncodingWriter(m.Encoding, w)
 		if err == nil {
-			m.RawSize, err = io.Copy(w, r)
+			_, err = w.Write(body)
 			err = multierr.Combine(err, closeCloser(w))
 		}
 		if err == nil {
 			m.Body = buf.Bytes()
 		}
+		m.RawSize = int64(len(body))
 		m.BodySize = int64(len(m.Body))
 	}
 	if err != nil {
@@ -188,10 +190,7 @@ func (m *HTTPResponse) SetResponse(resp *http.Response) (err error) {
 	}
 
 	if m.FileName != "" {
-		r, err = m.GetBody()
-		if err == nil {
-			m.ContentHash, err = ContentHash(r)
-		}
+		m.ContentHash = ContentHashBytes(body)
 	}
 
 	return
@@ -231,10 +230,10 @@ func (m *HTTPResponse) GetResponse(req *http.Request) (resp *http.Response, err 
 	return
 }
 
-func drainBody(b io.ReadCloser) (r1, r2 io.ReadCloser, err error) {
+func drainBody(b io.ReadCloser) (body []byte, r2 io.ReadCloser, err error) {
 	if b == nil || b == http.NoBody {
 		// No copying needed. Preserve the magic sentinel meaning of NoBody.
-		return http.NoBody, http.NoBody, nil
+		return nil, http.NoBody, nil
 	}
 	var buf bytes.Buffer
 	if _, err = buf.ReadFrom(b); err != nil {
@@ -243,7 +242,8 @@ func drainBody(b io.ReadCloser) (r1, r2 io.ReadCloser, err error) {
 	if err = b.Close(); err != nil {
 		return nil, b, err
 	}
-	return io.NopCloser(&buf), io.NopCloser(bytes.NewReader(buf.Bytes())), nil
+	body = buf.Bytes()
+	return body, io.NopCloser(bytes.NewReader(body)), nil
 }
 
 var shouldCompress = map[string]bool{}

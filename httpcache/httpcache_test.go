@@ -166,6 +166,11 @@ func setup() {
 			}
 		}
 	}))
+
+	mux.HandleFunc("/file", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", "attachment; filename=httpcache_test.go")
+		http.ServeFile(w, r, "httpcache_test.go")
+	})
 }
 
 func teardown() {
