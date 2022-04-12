@@ -8,6 +8,7 @@ run:
     - ".*\\.peg\\.go$"
     - ".*ignored_.*.go$"
     - "generated.go$"
+    - ".*_test.go$"
     - model_gen.go
 
 linters:

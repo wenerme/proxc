@@ -15,6 +15,7 @@ sqlite3 /tmp/proxc/db/wener.me.sqlite 'select method,url,raw_size,body_size,leng
 ```
 
 - Default to SQLite Backend
+  - zstd compressed
   - One SQLite DB per Host + File DB
 - httpcache based on https://github.com/gregjones/httpcache
 - proxy based on https://github.com/lqqyt2423/go-mitmproxy

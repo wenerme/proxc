@@ -62,18 +62,27 @@ func ContentHash(r io.Reader) (string, error) {
 
 func EncodingWriter(enc string, in io.Writer) (out io.Writer, err error) {
 	switch enc {
-	case "gzip":
+	case EncodingGzip:
 		return gzip.NewWriter(in), nil
-	case "deflate":
+	case EncodingDeflate:
 		return zlib.NewWriter(in), nil
-	case "zstd":
+	case EncodingZstd:
 		return zstd.NewWriter(in)
-	case "identity", "":
+	case EncodingIdentity, "":
 		return in, nil
 	default:
 		return nil, errors.Errorf("unknown encoding: %s", enc)
 	}
 }
+
+const (
+	EncodingZstd     = "zstd"
+	EncodingIdentity = "identity"
+	EncodingDeflate  = "deflate"
+	EncodingGzip     = "gzip"
+)
+
+var DefaultEncoding = EncodingZstd
 
 func closeCloser(v interface{}) error {
 	if v == nil {
@@ -87,17 +96,17 @@ func closeCloser(v interface{}) error {
 
 func EncodingReader(enc string, r io.Reader) (io.ReadCloser, error) {
 	switch enc {
-	case "gzip":
+	case EncodingGzip:
 		return gzip.NewReader(r)
-	case "deflate":
+	case EncodingDeflate:
 		return zlib.NewReader(r)
-	case "zstd":
+	case EncodingZstd:
 		d, err := zstd.NewReader(r)
 		if err != nil {
 			return nil, err
 		}
 		return d.IOReadCloser(), err
-	case "identity", "":
+	case EncodingIdentity, "":
 		return readCloser(r), nil
 	default:
 		return nil, errors.Errorf("unknown encoding: %s", enc)
@@ -148,7 +157,7 @@ func (m *HTTPResponse) SetResponse(resp *http.Response) (err error) {
 	}
 	m.ContentType, _, _ = mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if m.Encoding == "" && shouldCompress[m.ContentType] {
-		m.Encoding = "zstd"
+		m.Encoding = DefaultEncoding
 	}
 
 	if hdr := resp.Header.Get("Content-Disposition"); hdr != "" {
@@ -206,10 +215,6 @@ func (m *HTTPResponse) GetResponse(req *http.Request) (resp *http.Response, err 
 			return
 		}
 	}
-
-	//if len(m.Raw) > 0 {
-	//	return http.ReadResponse(bufio.NewReader(bytes.NewReader(m.Raw)), req)
-	//}
 
 	resp = &http.Response{
 		StatusCode:    m.StatusCode,

@@ -82,6 +82,7 @@ func varyMatches(cachedResp *http.Response, req *http.Request) bool {
 // If there is a stale Response, then any validators it contains will be set on the new request
 // to give the server a chance to respond with NotModified. If this happens, then the cached Response
 // will be returned.
+//nolint // todo improve this
 func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
 	// cacheKey := cacheKey(req)
 	cacheable := (req.Method == "GET" || req.Method == "HEAD") && req.Header.Get("range") == ""
@@ -250,7 +251,7 @@ func GetFreshness(req *http.Request, resp *http.Response) (freshness int) {
 // Transparent indicates the response should not be used to fulfil the request
 //
 // Because this is only a private cache, 'public' and 'private' in cache-control aren't
-// signficant. Similarly, smax-age isn't used.
+// significant. Similarly, smax-age isn't used.
 func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 	respCacheControl := parseCacheControl(respHeaders)
 	reqCacheControl := parseCacheControl(reqHeaders)
@@ -303,7 +304,7 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 		//  the client wants a response that will still be fresh for at least the specified number of seconds.
 		minfreshDuration, err := time.ParseDuration(minfresh + "s")
 		if err == nil {
-			currentAge = time.Duration(currentAge + minfreshDuration)
+			currentAge += minfreshDuration
 		}
 	}
 
@@ -321,7 +322,7 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 		}
 		maxstaleDuration, err := time.ParseDuration(maxstale + "s")
 		if err == nil {
-			currentAge = time.Duration(currentAge - maxstaleDuration)
+			currentAge -= maxstaleDuration
 		}
 	}
 

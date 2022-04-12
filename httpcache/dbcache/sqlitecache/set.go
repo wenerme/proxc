@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	_ "github.com/glebarez/go-sqlite"
+	_ "github.com/glebarez/go-sqlite" //nolint:revive
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
