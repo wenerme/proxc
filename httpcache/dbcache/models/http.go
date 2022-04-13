@@ -2,8 +2,6 @@ package models
 
 import (
 	"bytes"
-	"compress/gzip"
-	"compress/zlib"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,16 +11,15 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/klauspost/compress/zstd"
+	"github.com/wenerme/proxc/httpencoding"
+
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
 	"gorm.io/datatypes"
 	"gorm.io/gorm/clause"
 )
 
 type HTTPResponse struct {
 	Model
-	// Key       string //
 	Method string `gorm:"uniqueIndex:idx_http_responses_method_url"`
 	URL    string `gorm:"uniqueIndex:idx_http_responses_method_url"`
 	Host   string
@@ -31,16 +28,16 @@ type HTTPResponse struct {
 	// Size int
 	// Raw  []byte
 
-	Proto       string
-	StatusCode  int
-	Header      datatypes.JSON
-	Encoding    string // gzip, deflate, br, zstd, identity
-	RawSize     int64  // uncompressed size
-	BodySize    int64
-	Body        []byte
-	ContentType string
-	ContentHash string // sha2-256
-	FileName    string
+	Proto           string
+	StatusCode      int
+	Header          datatypes.JSON
+	RawSize         int64 // size before encoding
+	BodySize        int64 // size of Body
+	Body            []byte
+	ContentType     string
+	ContentEncoding string // gzip, deflate, br, zstd, identity
+	ContentHash     string // sha2-256 for raw data for file
+	FileName        string
 }
 
 func (HTTPResponse) ConflictColumns() []clause.Column {
@@ -60,58 +57,7 @@ func ContentHash(r io.Reader) (string, error) {
 	return hex.EncodeToString(sum.Sum(nil)), nil
 }
 
-func EncodingWriter(enc string, in io.Writer) (out io.Writer, err error) {
-	switch enc {
-	case EncodingGzip:
-		return gzip.NewWriter(in), nil
-	case EncodingDeflate:
-		return zlib.NewWriter(in), nil
-	case EncodingZstd:
-		return zstd.NewWriter(in)
-	case EncodingIdentity, "":
-		return in, nil
-	default:
-		return nil, errors.Errorf("unknown encoding: %s", enc)
-	}
-}
-
-const (
-	EncodingZstd     = "zstd"
-	EncodingIdentity = "identity"
-	EncodingDeflate  = "deflate"
-	EncodingGzip     = "gzip"
-)
-
-var DefaultEncoding = EncodingZstd
-
-func closeCloser(v interface{}) error {
-	if v == nil {
-		return nil
-	}
-	if c, ok := v.(io.Closer); ok {
-		return c.Close()
-	}
-	return nil
-}
-
-func EncodingReader(enc string, r io.Reader) (io.ReadCloser, error) {
-	switch enc {
-	case EncodingGzip:
-		return gzip.NewReader(r)
-	case EncodingDeflate:
-		return zlib.NewReader(r)
-	case EncodingZstd:
-		d, err := zstd.NewReader(r)
-		if err != nil {
-			return nil, err
-		}
-		return d.IOReadCloser(), err
-	case EncodingIdentity, "":
-		return readCloser(r), nil
-	default:
-		return nil, errors.Errorf("unknown encoding: %s", enc)
-	}
-}
+var DefaultEncoding = httpencoding.EncodingZstd
 
 func (m *HTTPResponse) ReadAll() (out []byte, err error) {
 	body, err := m.GetBody()
@@ -127,19 +73,7 @@ func (m *HTTPResponse) GetBody() (rc io.ReadCloser, err error) {
 	if len(m.Body) == 0 {
 		return http.NoBody, nil
 	}
-	var r io.Reader = bytes.NewReader(m.Body)
-	r, err = EncodingReader(m.Encoding, r)
-	return readCloser(r), err
-}
-
-func readCloser(r io.Reader) io.ReadCloser {
-	if r == nil {
-		return nil
-	}
-	if rc, _ := r.(io.ReadCloser); rc != nil {
-		return rc
-	}
-	return io.NopCloser(r)
+	return httpencoding.NewReader(m.ContentEncoding, bytes.NewReader(m.Body))
 }
 
 func (m *HTTPResponse) SetResponse(resp *http.Response) (err error) {
@@ -155,10 +89,31 @@ func (m *HTTPResponse) SetResponse(resp *http.Response) (err error) {
 	if err != nil {
 		return err
 	}
+
 	m.ContentType, _, _ = mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if m.Encoding == "" && shouldCompress[m.ContentType] {
-		m.Encoding = DefaultEncoding
+
+	bodyEncoding := resp.Header.Get("Content-Encoding")
+	if resp.Uncompressed {
+		bodyEncoding = ""
 	}
+	// reduce an encoding process
+	m.ContentEncoding = bodyEncoding
+
+	if m.ContentEncoding == "" && shouldCompress[m.ContentType] {
+		m.ContentEncoding = DefaultEncoding
+	}
+	var body io.Reader
+	body, resp.Body, err = drainBody(resp.Body)
+	if err != nil {
+		return errors.Wrap(err, "drain body")
+	}
+	buf := bytes.NewBuffer(nil)
+	m.RawSize, err = httpencoding.Transfer(bodyEncoding, body, m.ContentEncoding, buf)
+	if err != nil {
+		return errors.Wrap(err, "transfer body")
+	}
+	m.Body = buf.Bytes()
+	m.BodySize = int64(len(m.Body))
 
 	if hdr := resp.Header.Get("Content-Disposition"); hdr != "" {
 		_, params, _ := mime.ParseMediaType(hdr)
@@ -166,40 +121,6 @@ func (m *HTTPResponse) SetResponse(resp *http.Response) (err error) {
 		if filename != "" {
 			m.FileName = filename
 		}
-	}
-
-	var body []byte
-	body, resp.Body, err = drainBody(resp.Body)
-	if err != nil {
-		return errors.Wrap(err, "drain body")
-	}
-
-	switch {
-	case m.Encoding == "" || m.Encoding == "identity":
-		m.Body = body
-		m.BodySize = int64(len(m.Body))
-		m.RawSize = m.BodySize
-	default:
-		buf := &bytes.Buffer{}
-		var w io.Writer = buf
-
-		w, err = EncodingWriter(m.Encoding, w)
-		if err == nil {
-			_, err = w.Write(body)
-			err = multierr.Combine(err, closeCloser(w))
-		}
-		if err == nil {
-			m.Body = buf.Bytes()
-		}
-		m.RawSize = int64(len(body))
-		m.BodySize = int64(len(m.Body))
-	}
-	if err != nil {
-		return
-	}
-
-	if m.FileName != "" {
-		m.ContentHash = ContentHashBytes(body)
 	}
 
 	return
@@ -231,14 +152,27 @@ func (m *HTTPResponse) GetResponse(req *http.Request) (resp *http.Response, err 
 	if err != nil {
 		return
 	}
-	resp.Body, err = m.GetBody()
+
+	enc, _ := httpencoding.AcceptEncoding(m.ContentEncoding, req.Header.Get("Accept-Encoding"))
+	if enc == "" {
+		resp.Body, err = m.GetBody()
+		resp.Header.Del("Content-Encoding")
+		resp.Header.Del("Content-Length")
+	} else {
+		buf := bytes.NewBuffer(nil)
+		_, err = httpencoding.Transfer(m.ContentEncoding, bytes.NewReader(m.Body), enc, buf)
+		resp.Body = io.NopCloser(buf)
+		resp.Header.Set("Content-Encoding", enc)
+		resp.Header.Del("Content-Length")
+	}
+
 	return
 }
 
-func drainBody(b io.ReadCloser) (body []byte, r2 io.ReadCloser, err error) {
+func drainBody(b io.ReadCloser) (r1 io.ReadCloser, r2 io.ReadCloser, err error) {
 	if b == nil || b == http.NoBody {
 		// No copying needed. Preserve the magic sentinel meaning of NoBody.
-		return nil, http.NoBody, nil
+		return http.NoBody, http.NoBody, nil
 	}
 	var buf bytes.Buffer
 	if _, err = buf.ReadFrom(b); err != nil {
@@ -247,8 +181,7 @@ func drainBody(b io.ReadCloser) (body []byte, r2 io.ReadCloser, err error) {
 	if err = b.Close(); err != nil {
 		return nil, b, err
 	}
-	body = buf.Bytes()
-	return body, io.NopCloser(bytes.NewReader(body)), nil
+	return io.NopCloser(&buf), io.NopCloser(bytes.NewReader(buf.Bytes())), nil
 }
 
 var shouldCompress = map[string]bool{}

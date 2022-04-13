@@ -77,13 +77,26 @@ func SetResponse(o *SetResponseOptions) (err error) {
 		return
 	}
 	if hr.FileName != "" && hr.BodySize > 0 {
-		fc := &models.FileContent{
-			Hash:        hr.ContentHash,
-			Name:        hr.FileName,
-			Size:        hr.BodySize,
-			ContentType: hr.ContentType,
-			Content:     hr.Body,
+		var bodyReader io.ReadCloser
+		bodyReader, err = hr.GetBody()
+		if err != nil {
+			return
 		}
+		fc := &models.FileContent{
+			Hash:        "",
+			Name:        hr.FileName,
+			Size:        0,
+			ContentType: hr.ContentType,
+			Content:     nil,
+		}
+		fc.Content, err = io.ReadAll(bodyReader)
+		if err != nil {
+			return
+		}
+		fc.Size = int64(len(fc.Content))
+		fc.Hash = models.ContentHashBytes(fc.Content)
+		hr.ContentHash = fc.Hash
+
 		fc.Ext = DetectExt(fc.Name, fc.Content)
 		ref := &models.FileRef{
 			Hash: fc.Hash,

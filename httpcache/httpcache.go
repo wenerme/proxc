@@ -67,6 +67,9 @@ func (t *Transport) Client() *http.Client {
 func varyMatches(cachedResp *http.Response, req *http.Request) bool {
 	for _, header := range headerAllCommaSepValues(cachedResp.Header, "vary") {
 		header = http.CanonicalHeaderKey(header)
+		if header == "Accept-Encoding" {
+			continue
+		}
 		if header != "" && req.Header.Get(header) != cachedResp.Header.Get("X-Varied-"+header) {
 			return false
 		}

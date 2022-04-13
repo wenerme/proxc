@@ -13,6 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wenerme/proxc/httpencoding"
+
+	"github.com/wenerme/wego/testx"
+
 	"github.com/wenerme/proxc/httpcache/dbcache/sqlitecache"
 )
 
@@ -169,9 +173,20 @@ func setup() {
 
 	mux.HandleFunc("/file", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", "attachment; filename=httpcache_test.go")
+		w.Header().Set("Content-Type", "text/plain")
 		http.ServeFile(w, r, "httpcache_test.go")
 	})
+	mux.HandleFunc("/encoding", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Cache-Control", "max-age=3600")
+
+		writer := httpencoding.AcceptEncodingWriter(w, r)
+		testx.Must(writer.Write(testData))
+		testx.NoErr(writer.Close())
+	})
 }
+
+var testData = testx.Must(os.ReadFile("httpcache_test.go"))
 
 func teardown() {
 	close(s.done)

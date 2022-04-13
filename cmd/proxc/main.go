@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pkg/errors"
+	"github.com/wenerme/proxc/httpcache/dbcache/models"
+	"github.com/wenerme/proxc/httpencoding"
+
 	"github.com/wenerme/proxc/proxc"
 
 	env "github.com/caarlos0/env/v6"
@@ -47,6 +51,10 @@ func main() {
 				EnvVars:     []string{"DB_DIR"},
 				Destination: &_conf.DBDir,
 			},
+			&cli.StringFlag{
+				Name:  "encoding",
+				Value: "zstd",
+			},
 		},
 		Commands: cli.Commands{
 			{
@@ -79,6 +87,12 @@ func setup(cc *cli.Context) (err error) {
 
 	_conf.CaRootPath = os.ExpandEnv(_conf.CaRootPath)
 	_conf.DBDir = os.ExpandEnv(_conf.DBDir)
+
+	enc := cc.String("encoding")
+	if !httpencoding.IsSupported(enc) {
+		return errors.Errorf("encoding %s is not supported", enc)
+	}
+	models.DefaultEncoding = enc
 	return
 }
 

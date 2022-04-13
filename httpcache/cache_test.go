@@ -1,26 +1,48 @@
 package httpcache
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"os"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/wenerme/proxc/httpencoding"
+	"github.com/wenerme/wego/testx"
+
 	"github.com/wenerme/proxc/httpcache/dbcache"
 	"github.com/wenerme/proxc/httpcache/dbcache/models"
 )
 
+func TestGzip(t *testing.T) {
+	resetTest()
+	req := testx.Must(http.NewRequest("GET", s.server.URL+"/encoding", nil))
+	// initial request without encoding
+	resp := testx.Must(s.client.Do(req))
+	_, _ = io.ReadAll(resp.Body)
+	req.Header.Set("Accept-Encoding", "gzip, deflate")
+	resp = testx.Must(s.client.Do(req))
+	assert.Equal(t, resp.Header.Get("Content-Encoding"), "gzip")
+	assert.Equal(t, resp.Header.Get(XFromCache), "1")
+	assert.True(t, bytes.Equal(testData, testx.MustNonEOF(httpencoding.ContentEncodingReadAll(resp))))
+}
+
 func TestFile(t *testing.T) {
 	resetTest()
+
 	{
 		req, err := http.NewRequest("GET", s.server.URL+"/file", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
+		resp := testx.Must(s.client.Do(req))
+		_, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		resp = testx.Must(s.client.Do(req))
+		assert.Equal(t, resp.Header.Get(XFromCache), "1")
+
 		bytes, err := io.ReadAll(resp.Body)
 		if err != nil {
 			t.Fatal(err)
